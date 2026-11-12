@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.harness.board</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/python3</string>
+    <string>/PATH/TO/harness/board/server.py</string>
+    <string>--port</string>
+    <string>8765</string>
+  </array>
+  <key>WorkingDirectory</key><string>/PATH/TO/harness/board</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>HARNESS_BOARD_TOKEN_FILE</key><string>/PATH/TO/harness/board-token.txt</string>
+  </dict>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>StandardOutPath</key><string>/PATH/TO/harness/logs/board.out.log</string>
+  <key>StandardErrorPath</key><string>/PATH/TO/harness/logs/board.err.log</string>
+</dict>
+</plist>

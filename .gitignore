@@ -1,0 +1,29 @@
+# 本机配置和口令，不要提交
+config.json
+peers.json
+board-token.txt
+*.token
+
+# 运行数据与日志
+board/data/
+board/upload-tmp/
+board/*.log
+board/*.err.log
+*.log
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# 交接盘和备份
+交接盘/
+Handover/
+*.bak
+*.bak-*
+
+# 系统与编辑器
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp

@@ -1,0 +1,15 @@
+{
+  "self": "my-computer",
+  "label": "我的电脑",
+  "ownerName": "",
+  "port": 8765,
+  "handoverRoot": "",
+  "peers": [
+    {
+      "id": "other-computer",
+      "label": "另一台电脑",
+      "host": "<那台电脑的 Tailscale IP，形如 100.x.x.x>",
+      "port": 8765
+    }
+  ]
+}
