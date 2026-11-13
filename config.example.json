@@ -9,7 +9,8 @@
       "id": "other-computer",
       "label": "另一台电脑",
       "host": "<那台电脑的 Tailscale IP，形如 100.x.x.x>",
-      "port": 8765
+      "port": 8765,
+      "tokenFile": "other-computer.token"
     }
   ]
 }

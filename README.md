@@ -42,6 +42,7 @@ powershell -ExecutionPolicy Bypass -File scripts\install-windows.ps1
 1. 打开 `config.json`（第一次安装会从 `config.example.json` 拷出来，并填上本机名）。把其它电脑的 Tailscale IPv4（`tailscale ip -4` 得到的 `100.x.x.x`）写进 `peers`。
 2. 在其它每台电脑上同样安装一次，peers 互相写上。
 3. 本机口令在安装目录的 `board-token.txt`。从 Tailscale 打开时要输入这个口令。不要把口令提交到 git，也不要发给无关的人。
+   如果各台电脑各自生成了口令，在每个同伴条目中设置 `tokenFile`，指向本机保存的**目标电脑**口令文件，例如 `"tokenFile": "other-computer.token"`。相对路径相对于 `config.json` 所在目录，也可用绝对路径。通过安全方式把目标电脑的 `board-token.txt` 内容复制到该文件，限制文件访问权限；双向连接须在两台分别配置对方口令。建议使用 `.token` 后缀（已被 git 忽略），切勿提交口令文件或在配置中直接写口令。未设置 `tokenFile` 时沿用本机口令，兼容原来各机共用口令的配置；显式设置后文件缺失、为空或无法读取时会提示检查目标电脑口令，不会回退到本机口令。口令更换后同步更新对应文件。
 4. 用 Syncthing 把各台的交接盘文件夹共享起来。默认会尝试 `~/交接盘`（Mac）或用户目录下的「交接盘」（Windows），也可以在 `config.json` 的 `handoverRoot` 里指定。
 5. 可选：在 `config.json` 里填 `ownerName`，总览问候会用这个称呼。
 
