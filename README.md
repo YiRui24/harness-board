@@ -9,7 +9,7 @@
 - Python 3（标准库即可跑总控板；若要用 Codex 的自动发送，另装 `websocket-client`）
 - 每台要连起来的电脑都装 Tailscale，并登录到同一个尾巴网络
 - 建议用 Syncthing 同步「交接盘」文件夹（提示词和附件）
-- 可选：SyncClipboard，把剪贴板同步到其它电脑（千问办公目前是半自动发送，会用到剪贴板）
+- 可选：SyncClipboard，把剪贴板同步到其它电脑（千问办公目前是半自动发送，会用到剪贴板）。服务端放在最常开着的那台（推荐 Mac），见 [docs/syncclipboard.md](docs/syncclipboard.md)
 
 ## 一步安装
 
