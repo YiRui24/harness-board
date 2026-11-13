@@ -418,10 +418,38 @@ def list_queue_local(app, sid):
     return []
 
 
+def question_message_capability(app, sid, item):
+    """只有适配器确认可用普通消息、无需原生回执时才返回 True。"""
+    return False
+
+
+_question_lock = threading.Lock()
+_question_sends = {}
+
+
+def question_can_send(app, sid, item):
+    c = item.get("card") or {}
+    qs = c.get("questions") or []
+    return (item.get("kind") == "question" and not c.get("sensitive")
+            and not c.get("answered") and c.get("fallback") != "done"
+            and question_message_capability(app, sid, item) is True
+            and bool(qs) and all(q.get("required") in (True, False)
+                and (bool(q.get("options")) or q.get("inputType") == "text") for q in qs))
+
+
+def question_version(questions):
+    encoded = json.dumps(questions, ensure_ascii=False, sort_keys=True).encode('utf-8')
+    return hashlib.sha256(encoded).hexdigest()
+
+
 def pack_items(app, sid, n=40, title="", extra=None, device=None):
     its, st, err = items_local(app, sid, n, title=title, extra=extra)
     queue = list_queue_local(app, sid)
     items = N.normalize_list(app, its, queue=queue)
+    for item in items:
+        if question_can_send(app, sid, item):
+            item["card"]["responseMode"] = "message"
+            item["card"]["requestVersion"] = question_version(item["card"]["questions"])
     pending = N.pending_from_items(items, app, device=device, sid=sid, title=title)
     return items, st, err, pending, queue
 
@@ -434,11 +462,45 @@ def handle_act(body):
     action = body.get("action") or ""
     if not sid:
         return {"ok": False, "error": "缺少对话"}
-    if action == "answer":
-        text = (body.get("text") or body.get("option") or "").strip()
-        if not text:
-            return {"ok": False, "error": "没有作答内容"}
-        rec = start_send(dict(body, message=text, files=[], confirm=True, id=sid, app=app))
+    if action in ("answer", "answer_input"):
+        items, _, _, _, _ = pack_items(app, sid, n=200)
+        item = next((it for it in items if str(it.get("id")) == str(body.get("itemId"))), None)
+        if not item or not question_can_send(app, sid, item):
+            return {"ok": False, "fallback": "open", "error": "这条请求不能在这里作答，请到原窗口处理"}
+        qs = item["card"]["questions"]
+        if body.get("requestVersion") != question_version(qs):
+            return {"ok": False, "error": "题目已变化，请重新查看"}
+        answers = body.get("answers")
+        if not isinstance(answers, list) or len(answers) != len(qs):
+            return {"ok": False, "error": "请检查每一道题"}
+        lines = []
+        for q, answer in zip(qs, answers):
+            if not isinstance(answer, dict):
+                return {"ok": False, "error": "请检查每一道题"}
+            chosen, other = answer.get("selected"), answer.get("text")
+            if not isinstance(chosen, list) or not all(isinstance(x, int) and not isinstance(x, bool) for x in chosen):
+                return {"ok": False, "error": "请检查选项"}
+            opts = q.get("options") or []
+            if len(set(chosen)) != len(chosen) or any(x < 0 or x >= len(opts) for x in chosen) or (not q.get("multiSelect") and len(chosen) > 1):
+                return {"ok": False, "error": "请检查选项"}
+            if not isinstance(other, str):
+                return {"ok": False, "error": "请检查答案"}
+            other = other.strip()
+            if other and opts and not q.get("isOther"):
+                return {"ok": False, "error": "这道题不能填写其他答案"}
+            if other and opts and chosen and not q.get("multiSelect"):
+                return {"ok": False, "error": "这道题只能选一个答案"}
+            values = [opts[x]["label"] for x in chosen] + ([other] if other else [])
+            if q.get("required") and not values:
+                return {"ok": False, "error": "请完成必答题"}
+            lines.append((q.get("header") or "") + ("：" if q.get("header") else "") + (q.get("question") or "") + "\n" + ("、".join(values) if values else "（跳过）"))
+        key = (app, sid, str(item["id"]), json.dumps(qs, ensure_ascii=False, sort_keys=True))
+        with _question_lock:
+            prior = _question_sends.get(key)
+            if prior and prior.get("phase") not in ("failed", "blocked"):
+                return {"ok": True, "via": "send", "send": public_send(prior)}
+            rec = start_send(dict(body, message="\n\n".join(lines), files=[], confirm=True, id=sid, app=app))
+            _question_sends[key] = rec
         return {"ok": True, "via": "send", "send": public_send(rec)}
     if action in ("approve", "deny", "cancel"):
         # 官方 Codex 审批走 item/commandExecution/requestApproval 等未决 RPC。
@@ -1283,7 +1345,7 @@ def handover_text(rel):
 # ---------------- HTTP ----------------
 def _item_sig(it):
     t = it.get("text") or ""
-    return "%s|%s|%s|%s|%s|%s|%d|%s" % (it.get("id"), it.get("kind"), it.get("role"), it.get("type"), it.get("time"), it.get("ordinal"), len(t), t[:60])
+    return "%s|%s|%s|%s|%s|%s|%d|%s" % (it.get("id"), it.get("kind"), it.get("role"), it.get("type"), it.get("time"), it.get("ordinal"), len(t), t[:60]) + (json.dumps(it.get("card") or {}, ensure_ascii=False, sort_keys=True) if it.get("kind") == "question" else "")
 
 
 class H(BaseHTTPRequestHandler):
@@ -1501,10 +1563,18 @@ class H(BaseHTTPRequestHandler):
             )
             st, body = peer_request(peer, "GET", path, timeout=8)
             if st == 200 and isinstance(body, dict):
-                # 同伴若还是旧板，这里再规范化一遍（已有 kind 会原样通过）
-                if isinstance(body.get("items"), list) and body["items"] and "kind" not in (body["items"][0] or {}):
-                    body["items"] = N.normalize_list(app, body["items"], queue=body.get("queue"))
-                    body["pending"] = N.pending_from_items(body["items"], app, device=device, sid=sid, title=title)
+                # 旧同伴也要在进入缓存或页面前清除敏感题；只有新协议可保留能力声明，动作仍由目标设备复核。
+                if isinstance(body.get("items"), list):
+                    originals = body["items"]
+                    normalized = N.normalize_list(app, originals, queue=body.get("queue"))
+                    if body.get("questionProtocol") == 1:
+                        modes = {str(it.get("id")): (it.get("card") or {}).get("responseMode") for it in originals if isinstance(it, dict)}
+                        for item in normalized:
+                            c = item.get("card") or {}
+                            if modes.get(str(item.get("id"))) == "message" and not c.get("sensitive") and not c.get("answered"):
+                                c["responseMode"] = "message"
+                    body["items"] = normalized
+                    body["pending"] = N.pending_from_items(normalized, app, device=device, sid=sid, title=title)
                 body["fetchedAt"] = now_iso()
                 body["stale"] = False
                 _cache_put(_peer_items, (device, app, sid), body)
@@ -1526,7 +1596,7 @@ class H(BaseHTTPRequestHandler):
                 run = "idle"
             else:
                 run = "idle"
-        return {"id": sid, "state": run, "sending": "%s:%s" % (app, sid) in _sending,
+        return {"id": sid, "questionProtocol": 1, "state": run, "sending": "%s:%s" % (app, sid) in _sending,
                 "items": its, "pending": pend, "queue": [{"id": q.get("id"), "text": q.get("text"), "position": q.get("position")} for q in (queue or [])],
                 "error": err, "fetchedAt": now_iso(), "stale": False}
 

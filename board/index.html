@@ -152,6 +152,8 @@ body.ho-open .scrim,body.nav-open .scrim{display:block}
 .scard.error .hd{color:var(--red)}
 .opt{display:block;width:100%;text-align:left;border:1px solid var(--line2);background:var(--card);border-radius:10px;padding:8px 12px;cursor:pointer;margin-top:6px;font:inherit;color:inherit}
 .opt:hover{border-color:var(--blue);background:var(--hover)}
+.question-part+.question-part{border-top:1px solid var(--line);margin-top:14px;padding-top:14px}
+.opt input{margin-right:8px;accent-color:var(--blue)}
 .opt .d{display:block;font-size:12px;color:var(--sub);font-weight:400;margin-top:2px}
 .m.queue{opacity:.72}
 .m.queue .b{background:var(--g-bg);color:var(--mid);border-bottom-right-radius:4px}
@@ -855,8 +857,12 @@ $$('[data-close]').forEach(b=>b.onclick=()=>{const v=b.dataset.close;if(v==='nav
 function setState(st){const e=$('#tst');e.style.display='';e.className='st '+(st||'idle');e.textContent=ZH[st]||st||'';
   const t=sel&&sessions.find(x=>x.id===sel.id); if(t&&st&&t.runState!==st){t.runState=st;t.state=st;renderSessions()}}
 let seenSig=new Set();
-function sigOf(it){const t=it.text||'';return [it.id,it.kind,it.role,it.type,it.time,it.ordinal,t.length,t.slice(0,60)].join('|')}
+function sigOf(it){const t=it.text||'';return [it.id,it.kind,it.role,it.type,it.time,it.ordinal,t.length,t.slice(0,60),it.kind==='question'?JSON.stringify(it.card||{}):''].join('|')}
 const cardStore={};
+// 草稿只存在当前页面内，按设备、应用、对话、请求及题目内容隔离。
+const questionDrafts=new Map(), questionBusy=new Set();
+function questionKey(it){return JSON.stringify([curDev,curApp,sel&&sel.id,it.id,(it.card||{}).questions])}
+function questionDraft(it){const k=questionKey(it), qs=(it.card||{}).questions||[];if(!questionDrafts.has(k))questionDrafts.set(k,qs.map(()=>({selected:[],text:''})));return questionDrafts.get(k)}
 function putItemEl(it){
   const box=$('#msgs'); if(!box) return;
   const el=itemEl(it);
@@ -903,19 +909,17 @@ function itemEl(it){
     return d;
   }
   if(kind==='question'){
-    const c=it.card||{}, qs=c.questions||[];
-    const q=qs[0]||{question:it.text||'想跟你确认一件事',options:[],header:''};
-    const opts=(q.options||[]).map((o,i)=>`<button type="button" class="opt" data-act="answer" data-mid="${esc(it.id||'')}" data-opt="${esc(o.label||'')}">${esc(o.label||('选项 '+(i+1)))}${o.description?`<span class="d">${esc(o.description)}</span>`:''}</button>`).join('');
+    const c=it.card||{}, qs=c.questions||[], done=!!c.answered||c.fallback==='done';
+    const editable=c.responseMode==='message'&&!done&&!c.sensitive;
+    const draft=editable?questionDraft(it):[];
+    const parts=qs.map((q,qi)=>{
+      const options=q.options||[], ans=draft[qi]||{selected:[],text:''};
+      const opts=options.map((o,oi)=>`<label class="opt"><input type="${q.multiSelect?'checkbox':'radio'}" name="q-${esc(it.id||'')}-${qi}" data-q="${qi}" data-option="${oi}" ${ans.selected.includes(oi)?'checked':''} ${editable?'':'disabled'}>${esc(o.label||('选项 '+(oi+1)))}${o.description?`<span class="d">${esc(o.description)}</span>`:''}</label>`).join('');
+      const input=editable&&((!options.length&&q.inputType==='text')||(options.length&&q.isOther))?`<div class="qbox"><input data-qtext="${qi}" value="${esc(ans.text)}" placeholder="${options.length?'填写其他答案':'填写答案'}"></div>`:'';
+      return `<div class="question-part" data-question="${qi}">${q.header?`<div class="hint">${esc(q.header)}</div>`:''}<div class="ttl">${esc(q.question||'')}${q.required===true?' · 必答':q.required===false?' · 可选':''}</div>${opts}${input}</div>`;
+    }).join('');
     d.className='m assistant cardw';
-    d.innerHTML=`<div class="who">${LABELS[curApp]||'对方'} · ${hm(it.time)}</div>
-      <div class="b"><div class="scard question">
-        <div class="hd">想跟你确认${q.header?` · ${esc(q.header)}`:''}${it.verified===false?' · 先按通用卡片显示':''}</div>
-        <div class="bd"><div class="ttl">${esc(q.question||it.text||'')}</div>
-          ${opts||''}
-          ${(!opts || (q.isOther||c.allowOther!==false))?`<div class="qbox"><input data-mid="${esc(it.id||'')}" placeholder="或者自己写一句…"><button class="btn pri sm" type="button" data-act="answer_input" data-mid="${esc(it.id||'')}">发送</button></div>`:''}
-          <div class="hint">回答会发给这个对话（和在下面输入框发一样）。</div>
-        </div>
-      </div></div>`;
+    d.innerHTML=`<div class="who">${LABELS[curApp]||'对方'} · ${hm(it.time)}</div><div class="b"><div class="scard question"><div class="hd">想跟你确认${done?' · 已处理':''}</div><div class="bd">${c.sensitive?'<div class="ttl">含敏感问题，请到原窗口处理</div>':(parts||`<div class="ttl">${esc(it.text||'请到原窗口查看')}</div>`)}<div class="acts">${editable?`<button class="btn pri sm" type="button" data-act="submit_question" data-mid="${esc(it.id||'')}">发到对话</button>`:(!done?`<button class="btn ghost sm" type="button" data-act="open_app" data-mid="${esc(it.id||'')}">去原窗口处理</button>`:'')}</div>${editable?'<div class="hint">会作为一条普通消息发到这个对话。</div>':''}</div></div></div>`;
     return d;
   }
   if(kind==='approval'){
@@ -980,19 +984,39 @@ async function cardAct(it, action, extra){
     await post('/api/open',{device:curDev,app:curApp,id:sel.id,chatId:sel.chatId,subChatId:sel.subChatId||sel.id});
   }else toast((r&&r.error)||'没能完成这个操作');
 }
+async function submitQuestion(it, button){
+  if(!sel||!it) return;
+  const key=questionKey(it), draft=questionDraft(it), qs=it.card.questions||[];
+  if(questionBusy.has(key)) return;
+  const missing=qs.findIndex((q,i)=>q.required===true&&!draft[i].selected.length&&!draft[i].text.trim());
+  if(missing>=0){const part=button.closest('.scard').querySelector(`[data-question="${missing}"]`);if(part){part.scrollIntoView({block:'center'});const f=part.querySelector('input');if(f)f.focus()}return toast('请先完成这道必答题')}
+  questionBusy.add(key);button.disabled=true;
+  const target={device:curDev,app:curApp,id:sel.id,title:sel.title,itemId:it.id,requestVersion:it.card.requestVersion,action:'answer',confirm:true,answers:draft.map(a=>({selected:a.selected.slice(),text:a.text}))};
+  const r=await post('/api/act',target);
+  questionBusy.delete(key);button.disabled=false;
+  if(r&&r.ok&&r.send){if(sel&&curDev===target.device&&curApp===target.app&&sel.id===target.id){mergeSend(r.send);reconcile()}toast(['failed','blocked'].includes(r.send.phase)?(r.send.error||'发送失败，答案已保留'):'正在发送，请查看投递状态')}
+  else toast((r&&r.error)||'发送失败，答案已保留');
+}
 function bindCardClicks(root){
-  (root||document).addEventListener('click',ev=>{
-    const b=ev.target.closest('[data-act]'); if(!b||!b.dataset.act) return;
-    const it=cardStore[b.dataset.mid]; const act=b.dataset.act;
-    if(act==='answer') cardAct(it||{id:b.dataset.mid},'answer',{option:b.dataset.opt,text:b.dataset.opt});
-    else if(act==='answer_input'){const inp=b.parentElement&&b.parentElement.querySelector('input'); const t=(inp&&inp.value||'').trim(); if(!t) return toast('先写一句再发送'); cardAct(it||{id:b.dataset.mid},'answer',{text:t})}
-    else cardAct(it||{id:b.dataset.mid},act);
+  const base=root||document;
+  base.addEventListener('change',ev=>{
+    const el=ev.target;if(!el.matches('[data-option]'))return;
+    const wrap=el.closest('[data-mid]'), it=wrap&&cardStore[wrap.dataset.mid];if(!it)return;
+    const q=Number(el.dataset.q), o=Number(el.dataset.option), d=questionDraft(it)[q];
+    if(el.type==='radio'){d.selected=[o];d.text='';const text=el.closest('.question-part').querySelector('[data-qtext]');if(text)text.value=''}
+    else d.selected=el.checked?[...d.selected,o]:d.selected.filter(x=>x!==o);
   });
-  (root||document).addEventListener('keydown',ev=>{
-    if(ev.key!=='Enter'||ev.target.tagName!=='INPUT'||!ev.target.closest('.qbox')) return;
-    ev.preventDefault();
-    const mid=ev.target.dataset.mid; const t=ev.target.value.trim(); if(!t) return;
-    cardAct(cardStore[mid]||{id:mid},'answer',{text:t});
+  base.addEventListener('input',ev=>{
+    const el=ev.target;if(!el.matches('[data-qtext]'))return;
+    const wrap=el.closest('[data-mid]'), it=wrap&&cardStore[wrap.dataset.mid];if(!it)return;
+    const q=Number(el.dataset.qtext), d=questionDraft(it)[q];d.text=el.value;
+    if(!it.card.questions[q].multiSelect&&el.value){d.selected=[];el.closest('.question-part').querySelectorAll('[data-option]').forEach(x=>x.checked=false)}
+  });
+  base.addEventListener('click',ev=>{
+    const b=ev.target.closest('[data-act]');if(!b||!b.dataset.act)return;
+    const it=cardStore[b.dataset.mid], act=b.dataset.act;
+    if(act==='submit_question')submitQuestion(it,b);
+    else cardAct(it||{id:b.dataset.mid},act);
   });
 }
 function clearChat(){
@@ -1003,6 +1027,8 @@ function clearChat(){
 }
 async function pick(id,keepStep){
   const t=sessions.find(x=>x.id===id); if(!t){toast('这个对话不在列表里');return}
+  const devAt=curDev, appAt=curApp;
+  const isCurrent=()=>sel&&sel.id===id&&curDev===devAt&&curApp===appAt;
   const k=ckey(curDev,curApp,id), wasUnread=unread[k]?seen[k]||0:null;
   sel=t; if(!keepStep) setStep(null); markSeen(k); renderSessions(); renderDevices(); showView();
   $('#ttl').textContent=t.title; $('#tsub').textContent=devLabel(curDev)+' · '+(LABELS[curApp]||'');
@@ -1010,9 +1036,9 @@ async function pick(id,keepStep){
   $('#msgs').innerHTML='<div style="padding:10px 0">'+[70,45,60].map((w,i)=>`<div class="sk" style="height:${i%2?54:40}px;width:${w}%;margin:14px ${i%2?'0 14px auto':'auto 14px 0'};border-radius:14px"></div>`).join('')+'</div>'; $('#outbox').innerHTML='';
   if(es){es.close();es=null}
   const q='device='+encodeURIComponent(curDev)+'&app='+curApp+'&id='+encodeURIComponent(id)+'&title='+encodeURIComponent(t.title||'');
-  j('/api/cansend?'+q).then(r=>{if(sel&&sel.id===id){convMode={mode:r.mode||'blocked',why:r.why||r.error||''};renderTarget()}});
+  j('/api/cansend?'+q).then(r=>{if(isCurrent()){convMode={mode:r.mode||'blocked',why:r.why||r.error||''};renderTarget()}});
   const d=await j('/api/items?'+q+'&n=40');
-  if(!sel||sel.id!==id) return;
+  if(!isCurrent()) return;
   const hasItems=d&&Array.isArray(d.items);
   if(d.error&&!hasItems){$('#msgs').innerHTML='<div class="empty"><div class="big">🔌</div>'+esc(d.error)+'</div>';setChatSync({ok:false,error:d.error,stale:!!d.stale,at:d.lastOkAt||d.fetchedAt})}
   else{
@@ -1025,7 +1051,7 @@ async function pick(id,keepStep){
     setChatSync({ok:!d.stale&&!d.offline,stale:!!d.stale,at:d.fetchedAt||d.lastOkAt,error:d.error});
     if(d.fetchedAt||d.lastOkAt) lastSyncAt[curDev]=d.fetchedAt||d.lastOkAt;
   }
-  await pollSends(); scrollEnd(); subscribe(id,t.title||'');
+  await pollSends(); if(!isCurrent()) return; scrollEnd(); subscribe(id,t.title||'');
 }
 function scrollEnd(){const m=$('#wrap');m.scrollTop=m.scrollHeight}
 function subscribe(id,title){
@@ -1057,9 +1083,9 @@ function convKey(){return sel?ckey(curDev,curApp,sel.id):''}
 function mergeSend(s){const k=sends.findIndex(x=>x.id===s.id);if(k>=0)sends[k]=s;else sends.push(s);reportStep(s)}
 async function pollSends(){
   if(!sel) return;
-  const id=sel.id;
+  const id=sel.id, devAt=curDev, appAt=curApp;
   const r=await j('/api/sends?device='+encodeURIComponent(curDev)+'&app='+curApp+'&id='+encodeURIComponent(id));
-  if(!sel||sel.id!==id||!r||!r.sends) return;
+  if(!sel||sel.id!==id||curDev!==devAt||curApp!==appAt||!r||!r.sends) return;
   r.sends.forEach(mergeSend); reconcile();
 }
 function phaseLabel(s){

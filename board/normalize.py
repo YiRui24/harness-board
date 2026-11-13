@@ -74,7 +74,9 @@ def _questions(raw):
             "options": _opts(q.get("options") or []),
             "multiSelect": bool(q.get("multiSelect") or q.get("multi_select")),
             "isSecret": bool(q.get("isSecret") or q.get("is_secret")),
-            "isOther": bool(q.get("isOther") or q.get("is_other")),
+            "isOther": q.get("isOther") is True or q.get("is_other") is True,
+            "required": q.get("required") if isinstance(q.get("required"), bool) else None,
+            "inputType": q.get("inputType") if q.get("inputType") == "text" else None,
         })
     return out
 
@@ -295,7 +297,7 @@ def from_qwen(raw):
             tool_names.append(tn)
         if any(x in tn for x in PUBLISH_TOOLS) or "pages_publish" in tn or "pages-publish" in tn:
             publish_hit = True
-        qs = p.get("questions") or (p.get("input") or {}).get("questions") if isinstance(p.get("input"), dict) else None
+        qs = p.get("questions") or ((p.get("input") or {}).get("questions") if isinstance(p.get("input"), dict) else None)
         if qs or any(k in tn for k in ("ask_user", "askuser", "question", "request_user_input")):
             questions.extend(_questions(qs or p))
         if (p.get("type") or "").startswith("tool") or tn:
@@ -495,7 +497,7 @@ def pending_from_items(items, app, device=None, sid=None, title=""):
     return out
 
 
-def normalize_item(app, raw):
+def _normalize_item(app, raw):
     if not isinstance(raw, dict):
         return []
     if raw.get("kind") == "queue" or raw.get("queued"):
@@ -511,6 +513,30 @@ def normalize_item(app, raw):
         return from_workbuddy(raw)
     got = _already(raw)
     return [got] if got else from_codex(raw)  # 未知源按通用/Codex 形状尽量收
+
+
+def normalize_item(app, raw):
+    items = _normalize_item(app, raw)
+    for it in items:
+        if it.get("kind") != "question":
+            continue
+        card = it.get("card") or {}
+        questions = _questions(card.get("questions") or [])
+        # 敏感题整组不离开来源设备，也不进入待办预览。
+        if any(q.get("isSecret") for q in questions):
+            it["text"] = "含敏感问题，请到原窗口处理"
+            done = card.get("answered") is True or card.get("fallback") == "done"
+            it["card"] = {"sensitive": True, "questions": [], "answered": done,
+                          "fallback": "done" if done else "open"}
+            continue
+        card["questions"] = questions
+        # 来源未证明普通消息就是本请求的合法回执，不能降级发送。
+        card["responseMode"] = "open"
+        card["actionable"] = False
+        if card.get("fallback") != "done":
+            card["fallback"] = "open"
+        it["card"] = card
+    return items
 
 
 def normalize_list(app, items, queue=None):
