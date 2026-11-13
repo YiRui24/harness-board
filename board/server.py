@@ -162,7 +162,9 @@ def load_peers():
     DEVICE_ID = os.environ.get("HARNESS_DEVICE_ID") or cfg.get("self") or "local"
     DEVICE_LABEL = os.environ.get("HARNESS_DEVICE_LABEL") or cfg.get("label") or DEVICE_ID
     OWNER_NAME = cfg.get("ownerName") or cfg.get("owner") or ""
-    PEERS = list(cfg.get("peers") or [])
+    config_path = next((p for p in _config_paths() if p and os.path.exists(p)), os.path.join(ROOT, "config.json"))
+    base = os.path.dirname(os.path.abspath(config_path))
+    PEERS = [dict(p, _token_base=base) for p in (cfg.get("peers") or [])]
 
 
 def _is_cgnat(ip):
@@ -492,10 +494,32 @@ def find_peer(device):
     return None
 
 
+def peer_token(peer):
+    if "tokenFile" not in peer:
+        return TOKEN
+    try:
+        path = peer["tokenFile"]
+        if not isinstance(path, str) or not path.strip():
+            raise ValueError()
+        path = os.path.expanduser(path)
+        if not os.path.isabs(path):
+            path = os.path.join(peer.get("_token_base", ROOT), path)
+        with open(path, encoding="utf-8") as f:
+            token = f.read().strip()
+        if not token:
+            raise ValueError()
+        return token
+    except (OSError, UnicodeError, ValueError):
+        return None
+
+
 def peer_request(peer, method, path, body=None, timeout=25):
+    token = peer_token(peer)
+    if token is None:
+        return 0, {"error": "无法读取同伴口令文件，请检查目标电脑口令配置"}
     url = "http://%s:%s%s" % (peer["host"], peer["port"], path)
     headers = {
-        "Authorization": "Bearer " + TOKEN,
+        "Authorization": "Bearer " + token,
         "X-Harness-Node": "1",
         "X-Harness": "1",
         "Content-Type": "application/json",
@@ -970,10 +994,13 @@ def save_upload(rfile, length, name):
 
 def peer_upload(peer, rfile, length, name):
     import http.client
+    token = peer_token(peer)
+    if token is None:
+        return 0, {"error": "无法读取同伴口令文件，请检查目标电脑口令配置"}
     conn = http.client.HTTPConnection(peer["host"], peer["port"], timeout=120)
     try:
         conn.putrequest("POST", "/api/upload?device=%s" % quote(peer["id"]))
-        conn.putheader("Authorization", "Bearer " + TOKEN)
+        conn.putheader("Authorization", "Bearer " + token)
         conn.putheader("X-Harness-Node", "1")
         conn.putheader("X-Harness", "1")
         conn.putheader("X-File-Name", quote(name))
@@ -1808,7 +1835,10 @@ class H(BaseHTTPRequestHandler):
         peer = find_peer(device)
         try:
             if peer:
-                pst, _ = peer_request(peer, "GET", "/api/file?device=%s&rel=probe" % quote(peer["id"]), timeout=6)
+                pst, probe = peer_request(peer, "GET", "/api/file?device=%s&rel=probe" % quote(peer["id"]), timeout=6)
+                if pst in (401, 403) or (pst == 0 and peer_token(peer) is None):
+                    self.close_connection = True
+                    return self._json({"error": "无法通过同伴鉴权，请检查目标电脑口令", "detail": probe.get("error")}, 502)
                 if pst == 200:
                     st, res = peer_upload(peer, self.rfile, n, name)
                     return self._json(res, 200 if st == 200 else 502)
