@@ -1,0 +1,1 @@
+{ "Kestrel": { "Endpoints": { "Http": { "Url": "http://<服务端的 Tailscale IP>:5033" } } } }

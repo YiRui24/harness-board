@@ -9,3 +9,4 @@ if (Get-Command winget -ErrorAction SilentlyContinue) {
   Write-Host '请到 https://github.com/Jeric-X/SyncClipboard/releases 下载 Windows 版。'
 }
 Write-Host '打开 SyncClipboard 后，在设置里填你自己的同步服务。不要把密码写进本仓库。'
+Write-Host '服务端建议放在最常开着的电脑上（推荐 Mac），这台只当客户端。说明见 docs/syncclipboard.md。'

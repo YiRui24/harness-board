@@ -13,4 +13,5 @@ else
   fi
 fi
 echo "请打开 SyncClipboard，在设置里填你自己的同步服务。不要把密码写进本仓库。"
+echo "建议把服务端放在最常开着的电脑上（推荐 Mac），说明见 docs/syncclipboard.md。"
 echo "若总控板半自动发送会用到剪贴板，请避免其它工具长时间占用剪贴板。"
